@@ -1,0 +1,63 @@
+name: CI-CD to ECS Fargate
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'auth/**'
+      - 'users/**'
+      - 'catalog/**'
+      - 'payment/**'
+      - '.github/workflows/**'
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: jprivas30/my-vod-platform
+  ECS_CLUSTER: prod-cluster
+  ECS_SERVICE: backend-service
+  CONTAINER_NAME: backend-container
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+
+    - name: Checkout del codigo
+      uses: actions/checkout@v4
+
+    - name: Configurar credenciales de AWS (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::123456789012:role/GitHubActionsDeploymentRole
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Iniciar sesión de Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Extraer metadatos (tags, SHA)
+      id: meta
+      run: |
+        echo "IMAGE_TAG=gh-${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+    - name: Construct Docker image
+      run: |
+        docker build -t $ECR_REPO:$IMAGE_TAG .
+        docker tag $ECR_REPO:$IMAGE_TAG $ECR_REPO:latest
+    - name: Verificar Docker image
+      run: |
+        docker images | grep $ECR_REPO
+    - name: Push Docker image a Amazon ECR
+      run: |
+        docker push $ECR_REPO:$IMAGE_TAG
+        docker push $ECR_REPO:latest
+
+    - name: Trigger CodePipeline (for ECS deployment)
+      run: |
+        aws codepipeline start-pipeline-execution --name prod-deployment-pipeline
